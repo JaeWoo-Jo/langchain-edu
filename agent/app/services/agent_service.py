@@ -19,11 +19,28 @@ class AgentService:
 
     def _create_agent(self, thread_id: uuid.UUID = None):
         """LangChain 에이전트 생성"""
-        # IMP: DeepAgents 라이브러리를 사용하여 LangGraph 기반의 에이전트를 생성하는 구현. 
-        # LLM 모델, 사용할 도구(Tools), 시스템 프롬프트, 상태 저장소(Checkpointer), 그리고 응답 포맷(ToolStrategy)을 결합하여 워크플로우를 초기화합니다.
-        # Agent 생성
-        from app.agents.dummy import Agent
-        self.agent = Agent()
+        from langchain_openai import ChatOpenAI
+        from langgraph.prebuilt import create_react_agent
+        from langgraph.checkpoint.memory import InMemorySaver
+        from app.core.config import settings
+        from app.agents.prompts import system_prompt
+        from app.agents.tools import search_price, compare_prices, create_price_chart
+
+        llm = ChatOpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            model=settings.OPENAI_MODEL,
+        )
+
+        tools = [search_price, compare_prices, create_price_chart]
+
+        checkpointer = InMemorySaver()
+
+        self.agent = create_react_agent(
+            llm,
+            tools,
+            prompt=system_prompt,
+            checkpointer=checkpointer,
+        )
 
     # 실제 대화 로직
     @log_execution
