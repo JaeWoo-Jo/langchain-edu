@@ -111,15 +111,19 @@ class AgentService:
                     custom_logger.info(f"에이전트 청크: {chunk}")
                     try:
                         for step, event in chunk.items():
-                            if not event or not (step in ["model", "tools"]):
+                            if not event or not (step in ["model", "agent", "tools"]):
                                 continue
                             messages = event.get("messages", [])
                             if len(messages) == 0:
                                 continue
                             message = messages[0]
-                            if step == "model":
+                            if step in ("model", "agent"):
                                 tool_calls = message.tool_calls
                                 if not tool_calls:
+                                    # 도구 호출 없음 = 최종 답변
+                                    content = message.content or ""
+                                    metadata = self._parse_metadata(content)
+                                    yield f'{{"step": "done", "message_id": {json.dumps(str(uuid.uuid4()))}, "role": "assistant", "content": {json.dumps(content, ensure_ascii=False)}, "metadata": {json.dumps(metadata, ensure_ascii=False)}, "created_at": "{datetime.utcnow().isoformat()}"}}'
                                     continue
                                 tool = tool_calls[0]
                                 if tool.get("name") == "ChatResponse":
@@ -193,3 +197,24 @@ class AgentService:
             for k, v in metadata.items():
                 result[k] = v
         return result
+
+    def _parse_metadata(self, content: str) -> dict:
+        """에이전트 응답에서 [TABLE_DATA]...[/TABLE_DATA], [CHART_DATA]...[/CHART_DATA] 태그를 파싱합니다."""
+        import re
+        metadata = {}
+
+        table_match = re.search(r'\[TABLE_DATA\](.*?)\[/TABLE_DATA\]', content, re.DOTALL)
+        if table_match:
+            try:
+                metadata["data"] = json.loads(table_match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        chart_match = re.search(r'\[CHART_DATA\](.*?)\[/CHART_DATA\]', content, re.DOTALL)
+        if chart_match:
+            try:
+                metadata["chart"] = json.loads(chart_match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        return metadata
