@@ -17,17 +17,37 @@ from app.core.config import settings
 from app.agents.prompts import system_prompt
 from app.agents.tools import search_price, compare_prices, create_price_chart
 
+from opik.integrations.langchain import OpikTracer, track_langgraph
+
 
 class AgentService:
     def __init__(self):
         self.agent = None
         self._checkpointer = InMemorySaver()
         self.progress_queue: asyncio.Queue = asyncio.Queue()
+        self._opik_configured = False
+
+    def _configure_opik(self):
+        """Opik 설정 (한 번만 실행)"""
+        if self._opik_configured:
+            return
+        import opik
+        opik_settings = settings.OPIK
+        if opik_settings and opik_settings.URL_OVERRIDE:
+            opik.configure(
+                url=opik_settings.URL_OVERRIDE,
+                workspace=opik_settings.WORKSPACE or "default",
+                use_local=True,
+            )
+            custom_logger.info(f"Opik 설정 완료: {opik_settings.URL_OVERRIDE}, 프로젝트: {opik_settings.PROJECT}")
+        self._opik_configured = True
 
     def _create_agent(self):
         """LangChain 에이전트 생성 (한 번만 생성 후 캐싱)"""
         if self.agent is not None:
             return
+
+        self._configure_opik()
 
         llm = ChatOpenAI(
             api_key=settings.OPENAI_API_KEY,
@@ -36,12 +56,24 @@ class AgentService:
 
         tools = [search_price, compare_prices, create_price_chart]
 
-        self.agent = create_react_agent(
+        compiled_agent = create_react_agent(
             llm,
             tools,
             prompt=system_prompt,
             checkpointer=self._checkpointer,
         )
+
+        # Opik 트레이싱 래핑
+        opik_settings = settings.OPIK
+        if opik_settings and opik_settings.PROJECT:
+            opik_tracer = OpikTracer(
+                project_name=opik_settings.PROJECT,
+                tags=["langgraph", "react-agent"],
+            )
+            self.agent = track_langgraph(compiled_agent, opik_tracer)
+            custom_logger.info("Opik track_langgraph 래핑 완료")
+        else:
+            self.agent = compiled_agent
 
     # 실제 대화 로직
     @log_execution
