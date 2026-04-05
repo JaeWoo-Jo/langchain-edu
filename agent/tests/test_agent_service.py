@@ -1,33 +1,21 @@
 from unittest.mock import patch, MagicMock
 
 
-def test_agent_created_once():
-    """_create_agent()가 여러 번 호출되어도 agent를 한 번만 생성하는지 확인"""
-    with patch("app.services.agent_service.ChatOpenAI"), \
-         patch("app.services.agent_service.create_react_agent") as mock_create, \
-         patch("app.services.agent_service.InMemorySaver"):
+def test_agent_created():
+    """_create_agent()가 에이전트를 정상 생성하는지 확인"""
+    with patch("langchain_openai.ChatOpenAI"), \
+         patch("app.core.config.settings") as mock_settings:
 
-        mock_create.return_value = MagicMock()
-
-        from app.services.agent_service import AgentService
-        service = AgentService()
-        service._create_agent()
-        service._create_agent()
-
-        mock_create.assert_called_once()
-
-
-def test_checkpointer_persists():
-    """checkpointer가 인스턴스 수명 동안 유지되는지 확인"""
-    with patch("app.services.agent_service.ChatOpenAI"), \
-         patch("app.services.agent_service.create_react_agent"), \
-         patch("app.services.agent_service.InMemorySaver") as mock_saver:
-
-        mock_saver.return_value = MagicMock()
+        mock_settings.OPENAI_MODEL = "gpt-4o"
+        mock_settings.OPENAI_API_KEY = "test-key"
+        mock_settings.OPIK = None
+        mock_settings.DEEPAGENT_RECURSION_LIMIT = 40
 
         from app.services.agent_service import AgentService
         service = AgentService()
-        service._create_agent()
-        service._create_agent()
+        service.checkpointer = MagicMock()
 
-        mock_saver.assert_called_once()
+        with patch("app.agents.price_agent.create_deep_agent") as mock_create:
+            mock_create.return_value = MagicMock()
+            service._create_agent()
+            mock_create.assert_called_once()

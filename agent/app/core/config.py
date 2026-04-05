@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     PUBLIC_DATA_API_KEY: str = ""
 
     # DeepAgents 설정
-    DEEPAGENT_RECURSION_LIMIT: int = 20
+    DEEPAGENT_RECURSION_LIMIT: int = 40
 
     OPIK: OpikSettings | None = None
     

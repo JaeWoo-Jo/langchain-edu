@@ -11,8 +11,9 @@ from app.utils.logger import log_execution, custom_logger
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.errors import GraphRecursionError
 
-# 도구 호출 총 횟수 제한 (ReAct 루프: 도구 1회 = LLM노드 + Tool노드 = 2 step)
-_RECURSION_LIMIT = 15
+from app.core.config import settings as _settings
+# Plan-Execute-Reflect: 단계당 ~5 노드 사용, 기본 40
+_RECURSION_LIMIT = _settings.DEEPAGENT_RECURSION_LIMIT
 
 
 def _configure_opik():
@@ -73,7 +74,7 @@ class AgentService:
         self.checkpointer = AsyncSqliteSaver(conn)
 
     def _create_agent(self):
-        """LangChain 가격 에이전트 생성"""
+        """LangChain 딥에이전트 생성"""
         from app.agents.price_agent import create_price_agent
         assert self.checkpointer is not None, "checkpointer가 초기화되지 않았습니다. _init_checkpointer를 먼저 호출하세요."
         self.agent = create_price_agent(
@@ -112,39 +113,64 @@ class AgentService:
     # -----------------------------------------------------------------------
 
     def _parse_chunk(self, chunk: dict):
-        """에이전트 스트림 청크를 SSE 이벤트 문자열 리스트로 변환한다."""
+        """딥에이전트 스트림 청크를 SSE 이벤트 문자열 리스트로 변환한다."""
         events: list[str] = []
-        for step, event in chunk.items():
-            if not event or step not in ("model", "tools"):
-                continue
-            messages = event.get("messages", [])
-            if not messages:
-                continue
-            message = messages[0]
 
-            if step == "model":
-                tool_calls = message.tool_calls
-                if not tool_calls:
+        for node_name, event in chunk.items():
+            if not event:
+                continue
+
+            messages = event.get("messages", [])
+
+            # --- 계획 수립 ---
+            if node_name == "planner":
+                plan = event.get("plan", [])
+                current = event.get("current_step", "")
+                all_steps = ([current] + plan) if current else plan
+                events.append(json.dumps({
+                    "step": "plan",
+                    "plan": all_steps,
+                }, ensure_ascii=False))
+
+            # --- 도구 호출 (Executor LLM 응답) ---
+            elif node_name == "executor":
+                if not messages:
                     continue
-                first_tool = tool_calls[0]
-                if first_tool.get("name") == "ChatResponse":
-                    args = first_tool.get("args", {})
-                    custom_logger.info(args)
-                    events.append(self._done_event(
-                        content=args.get("content", ""),
-                        metadata=self._handle_metadata(args.get("metadata")),
-                        message_id=args.get("message_id"),
-                    ))
-                else:
+                message = messages[0]
+                tool_calls = getattr(message, "tool_calls", None)
+                if tool_calls:
                     events.append(json.dumps({
                         "step": "model",
                         "tool_calls": [tc["name"] for tc in tool_calls],
                     }))
 
-            elif step == "tools":
+            # --- 도구 실행 결과 ---
+            elif node_name == "tools":
+                if not messages:
+                    continue
+                message = messages[0]
                 events.append(
-                    f'{{"step": "tools", "name": {json.dumps(message.name)}, "content": {message.content}}}'
+                    f'{{"step": "tools", "name": {json.dumps(message.name)}, '
+                    f'"content": {message.content}}}'
                 )
+
+            # --- 실행 결과 평가 ---
+            elif node_name == "reflector":
+                content = ""
+                if messages:
+                    content = getattr(messages[0], "content", "")
+                events.append(json.dumps({
+                    "step": "reflect",
+                    "content": content,
+                }, ensure_ascii=False))
+
+            # --- 최종 응답 ---
+            elif node_name == "synthesizer":
+                response = event.get("response", "")
+                events.append(self._done_event(
+                    content=response,
+                    metadata=self._handle_metadata(event.get("metadata")),
+                ))
 
         return events
 

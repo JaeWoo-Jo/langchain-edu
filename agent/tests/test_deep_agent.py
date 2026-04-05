@@ -86,7 +86,7 @@ class TestAdvanceStep:
 # 노드 함수 테스트
 # ---------------------------------------------------------------------------
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 
 class TestPlanner:
@@ -311,3 +311,69 @@ class TestCreateDeepAgent:
         node_names = set(graph.get_graph().nodes.keys())
         expected = {"__start__", "__end__", "planner", "executor", "tools", "reflector", "advance_step", "synthesizer"}
         assert expected.issubset(node_names)
+
+
+# ---------------------------------------------------------------------------
+# _parse_chunk 통합 테스트
+# ---------------------------------------------------------------------------
+
+
+class TestParseChunk:
+    """agent_service._parse_chunk가 딥에이전트 청크를 올바르게 파싱하는지 테스트."""
+
+    def _make_service(self):
+        with patch("langchain_openai.ChatOpenAI"), \
+             patch("app.core.config.settings") as mock_settings:
+            mock_settings.OPENAI_MODEL = "gpt-4o"
+            mock_settings.OPENAI_API_KEY = "test-key"
+            mock_settings.OPIK = None
+            mock_settings.DEEPAGENT_RECURSION_LIMIT = 40
+            from app.services.agent_service import AgentService
+            return AgentService()
+
+    def test_planner_청크_파싱(self):
+        import json
+        service = self._make_service()
+        chunk = {
+            "planner": {
+                "plan": ["무 검색"],
+                "current_step": "배추 검색",
+                "messages": [AIMessage(content="[계획 수립] 2단계")],
+            }
+        }
+        events = service._parse_chunk(chunk)
+        assert len(events) == 1
+        parsed = json.loads(events[0])
+        assert parsed["step"] == "plan"
+        assert parsed["plan"] == ["배추 검색", "무 검색"]
+
+    def test_executor_도구호출_파싱(self):
+        import json
+        service = self._make_service()
+        chunk = {
+            "executor": {
+                "messages": [AIMessage(
+                    content="",
+                    tool_calls=[{"name": "search_price", "args": {}, "id": "1"}],
+                )]
+            }
+        }
+        events = service._parse_chunk(chunk)
+        assert len(events) == 1
+        parsed = json.loads(events[0])
+        assert parsed["step"] == "model"
+        assert "search_price" in parsed["tool_calls"]
+
+    def test_synthesizer_done_이벤트_파싱(self):
+        import json
+        service = self._make_service()
+        chunk = {
+            "synthesizer": {
+                "response": "배추 가격 2,500원이야ㅋㅋ",
+            }
+        }
+        events = service._parse_chunk(chunk)
+        assert len(events) == 1
+        parsed = json.loads(events[0])
+        assert parsed["step"] == "done"
+        assert "2,500원" in parsed["content"]
