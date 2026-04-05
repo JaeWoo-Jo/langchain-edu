@@ -1,7 +1,7 @@
-"""공공데이터 참가격 생필품 가격정보 → OpenSearch 적재 스크립트
+"""공공데이터 참가격 생필품 가격정보 → Elasticsearch 적재 스크립트
 
 KAMIS(농산물유통정보) API를 호출하여 생필품 가격 데이터를 수집하고
-OpenSearch에 적재합니다.
+Elasticsearch에 적재합니다.
 
 사용법:
     cd agent
@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import httpx
 from app.core.config import settings
-from app.utils.opensearch_client import get_opensearch_client
+from app.utils.opensearch_client import get_elasticsearch_client
 
 INDEX_NAME = "prices-daily-goods"
 API_URL = "https://www.kamis.or.kr/service/price/xml.do"
@@ -72,7 +72,7 @@ def create_index_if_not_exists(client):
 
 
 def index_prices(client, items: list, date: str):
-    """가격 데이터를 OpenSearch에 적재합니다."""
+    """가격 데이터를 Elasticsearch에 적재합니다."""
     count = 0
     for item in items:
         doc = {
@@ -102,7 +102,7 @@ def main():
 
     print(f"[수집 시작] 날짜: {args.date}")
 
-    client = get_opensearch_client()
+    client = get_elasticsearch_client()
     create_index_if_not_exists(client)
 
     data = fetch_prices(args.date)

@@ -1,8 +1,12 @@
-"""Opik 평가 테스트 - 100개 데이터셋 생성 및 에이전트 평가 실행"""
+"""Opik 평가 테스트 - 데이터셋 생성 및 에이전트 평가 실행"""
 import os
 import asyncio
 import json
 import uuid
+
+# Opik evaluate()가 async로 돌 때 asyncio.run() 중첩 허용
+import nest_asyncio
+nest_asyncio.apply()
 
 # Opik 환경변수 설정
 os.environ["OPIK_URL_OVERRIDE"] = "https://opik-edu.didim365.app/api"
@@ -16,6 +20,7 @@ opik.configure(
     use_local=True,
 )
 
+from openai import OpenAI
 from opik import Opik, evaluate
 from opik.evaluation.metrics import base_metric, score_result
 from typing import Any
@@ -27,7 +32,7 @@ from typing import Any
 ITEMS = ["쌀", "찹쌀", "콩", "팥", "녹두", "고구마", "감자"]
 
 def generate_dataset():
-    """에이전트 도구 3종(검색/비교/차트)에 맞춘 100개 테스트 케이스 생성"""
+    """에이전트 도구 4종(검색/통합검색/비교/차트)에 맞춘 115개 테스트 케이스 생성"""
     dataset_items = []
 
     # === 가격 검색 질문 (search_price) - 35개 ===
@@ -79,6 +84,33 @@ def generate_dataset():
                 "item": item,
             })
 
+    # === 통합 검색 질문 (search) - 15개 ===
+    # 레시피·영양·식재료 관련 질문 → search 서브에이전트 호출
+    rag_questions = [
+        {"input": "감자로 뭐 해먹을 수 있어?", "item": "감자"},
+        {"input": "고구마 요리 추천해줘", "item": "고구마"},
+        {"input": "콩으로 만들 수 있는 요리 알려줘", "item": "콩"},
+        {"input": "감자 영양성분 알려줘", "item": "감자"},
+        {"input": "고구마 칼로리 얼마야?", "item": "고구마"},
+        {"input": "단백질 많은 식재료 뭐 있어?", "item": ""},
+        {"input": "된장국 만드는 법 알려줘", "item": ""},
+        {"input": "볶음밥 레시피 추천해줘", "item": ""},
+        {"input": "자취생 간단 요리 추천", "item": ""},
+        {"input": "감자 보관법 알려줘", "item": "감자"},
+        {"input": "고구마 삶는 법", "item": "고구마"},
+        {"input": "오늘 저녁 싸게 해먹을 수 있는 메뉴 추천해줘", "item": ""},
+        {"input": "쌀이랑 감자 중에 탄수화물 뭐가 많아?", "item": "쌀,감자"},
+        {"input": "다이어트할 때 뭐 먹으면 좋아?", "item": ""},
+        {"input": "팥으로 디저트 만들 수 있어?", "item": "팥"},
+    ]
+    for q in rag_questions:
+        dataset_items.append({
+            "input": q["input"],
+            "expected_tool": "search",
+            "category": "통합검색",
+            "item": q["item"],
+        })
+
     # === 복합 질문 - 5개 ===
     complex_questions = [
         {"input": "쌀이랑 콩 가격 비교해줘", "expected_tool": "search_price", "category": "복합질문", "item": "쌀,콩"},
@@ -94,11 +126,11 @@ def generate_dataset():
         {"input": "안녕!", "expected_tool": "none", "category": "일반대화", "item": ""},
         {"input": "자취할 때 절약 팁 알려줘", "expected_tool": "none", "category": "일반대화", "item": ""},
         {"input": "존재하지않는품목 가격 알려줘", "expected_tool": "search_price", "category": "에지케이스", "item": "존재하지않는품목"},
-        {"input": "오늘 뭐 해먹지?", "expected_tool": "none", "category": "일반대화", "item": ""},
+        {"input": "오늘 뭐 해먹지?", "expected_tool": "search", "category": "통합검색", "item": ""},
     ]
     dataset_items.extend(edge_cases)
 
-    return dataset_items[:100]  # 정확히 100개
+    return dataset_items  # 115개
 
 
 # ============================================================
@@ -109,10 +141,12 @@ class ToolUsageMetric(base_metric.BaseMetric):
     """에이전트가 올바른 도구를 호출했는지 확인하는 메트릭"""
     name = "tool_usage_accuracy"
 
+    ALL_TOOLS = ["search_price", "search", "compare_prices", "create_price_chart"]
+
     def score(self, output: str, expected_tool: str = "", **ignored_kwargs: Any):
         if expected_tool == "none":
             # 도구 호출 없이 직접 응답해야 하는 경우
-            has_tool = any(t in output for t in ["search_price", "compare_prices", "create_price_chart"])
+            has_tool = any(f"tools:{t}" in output or f",{t}" in output for t in self.ALL_TOOLS)
             return score_result.ScoreResult(
                 name=self.name,
                 value=1.0 if not has_tool else 0.5,
@@ -195,6 +229,13 @@ class ResponseCompletenessMetric(base_metric.BaseMetric):
             if "원" in output:
                 score_val += 0.5
 
+        elif category == "통합검색":
+            # 레시피/영양/식재료 관련 응답
+            if any(kw in output for kw in ["레시피", "요리", "만들", "재료", "조리", "영양", "칼로리"]):
+                score_val += 0.5
+            if len(output) > 50:
+                score_val += 0.5
+
         elif category in ("일반대화", "복합질문", "에지케이스"):
             # 응답이 있으면 기본 점수
             score_val = 1.0 if len(output) > 10 else 0.5
@@ -203,6 +244,78 @@ class ResponseCompletenessMetric(base_metric.BaseMetric):
             name=self.name, value=min(score_val, 1.0),
             reason=f"카테고리: {category}, 응답길이: {len(output)}자"
         )
+
+
+class LLMJudgeMetric(base_metric.BaseMetric):
+    """GPT-4o를 판사로 사용하여 답변을 4가지 기준으로 채점하는 메트릭 (LLM-as-a-judge)
+
+    채점 기준:
+        1. 정확성(accuracy)     - 사실에 기반한 정확한 정보인가?
+        2. 유용성(usefulness)   - 사용자가 원하는 정보를 담고 있는가?
+        3. 완결성(completeness) - 빠진 정보 없이 충분한가?
+        4. 자연스러움(naturalness) - 한국어 표현이 자연스러운가?
+
+    각 기준 1~5점, 평균을 0.0~1.0으로 정규화하여 Opik에 기록.
+    """
+    name = "llm_judge"
+
+    SYSTEM_PROMPT = """당신은 AI 에이전트의 답변 품질을 평가하는 전문 평가자입니다.
+
+아래 사용자 질문과 에이전트 답변을 보고, 4가지 기준 각각을 1~5점으로 채점하세요.
+
+## 채점 기준
+1. **정확성**: 질문에 대해 사실에 기반한 정확한 정보를 제공하는가?
+2. **유용성**: 사용자가 실제로 원하는 정보를 잘 담고 있는가?
+3. **완결성**: 답변이 충분히 완전한가? 빠진 정보는 없는가?
+4. **한국어 자연스러움**: 한국어 표현이 자연스럽고 읽기 쉬운가?
+
+## 점수 기준
+- 5점: 매우 우수
+- 4점: 우수
+- 3점: 보통
+- 2점: 미흡
+- 1점: 매우 미흡
+
+반드시 아래 JSON 형식으로만 응답하세요:
+{"accuracy": <1-5>, "usefulness": <1-5>, "completeness": <1-5>, "naturalness": <1-5>, "reason": "<한줄 총평>"}"""
+
+    def __init__(self):
+        from app.core.config import settings
+        self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
+
+    def score(self, output: str, input: str = "", **ignored_kwargs: Any):
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4.1-mini",
+                messages=[
+                    {"role": "system", "content": self.SYSTEM_PROMPT},
+                    {"role": "user", "content": f"## 사용자 질문\n{input}\n\n## 에이전트 답변\n{output}"},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0,
+            )
+
+            result = json.loads(response.choices[0].message.content)
+            avg = (
+                result["accuracy"]
+                + result["usefulness"]
+                + result["completeness"]
+                + result["naturalness"]
+            ) / 4
+            normalized = avg / 5.0  # 1~5점 → 0.0~1.0
+
+            reason = (
+                f"정확성:{result['accuracy']} 유용성:{result['usefulness']} "
+                f"완결성:{result['completeness']} 자연스러움:{result['naturalness']} "
+                f"| {result['reason']}"
+            )
+            return score_result.ScoreResult(
+                name=self.name, value=normalized, reason=reason,
+            )
+        except Exception as e:
+            return score_result.ScoreResult(
+                name=self.name, value=0.0, reason=f"LLM 채점 실패: {str(e)}",
+            )
 
 
 # ============================================================
@@ -222,22 +335,23 @@ def call_agent(input_text: str, model_override: str = None) -> dict:
     service = AgentService()
     thread_id = uuid.uuid4()
 
-    all_chunks = []
     tool_calls = []
     final_content = ""
 
     async def _run():
         nonlocal final_content, tool_calls
         async for chunk_str in service.process_query(input_text, thread_id):
-            all_chunks.append(chunk_str)
             try:
                 chunk = json.loads(chunk_str)
-                if chunk.get("step") == "model" and chunk.get("tool_calls"):
-                    tool_calls.extend(chunk["tool_calls"])
-                if chunk.get("step") == "done":
-                    final_content = chunk.get("content", "")
-            except json.JSONDecodeError:
-                pass
+            except (json.JSONDecodeError, TypeError):
+                continue
+            step = chunk.get("step", "")
+            if step == "model" and chunk.get("tool_calls"):
+                tool_calls.extend(chunk["tool_calls"])
+            if step == "tools" and chunk.get("name"):
+                tool_calls.append(chunk["name"])
+            if step == "done":
+                final_content = chunk.get("content", "")
 
     asyncio.run(_run())
 
@@ -248,7 +362,6 @@ def call_agent(input_text: str, model_override: str = None) -> dict:
     return {
         "output": final_content,
         "tool_calls_str": ",".join(tool_calls),
-        "all_chunks": json.dumps(all_chunks, ensure_ascii=False),
     }
 
 
@@ -282,7 +395,7 @@ def main():
     print(f"\nOpik 데이터셋 'jw-agent-eval-100' 등록 완료")
 
     # 평가할 모델 목록
-    models = os.environ.get("EVAL_MODELS", "gpt-4o").split(",")
+    models = os.environ.get("EVAL_MODELS", "gpt-4.1-mini").split(",")
     all_results = {}
 
     for model_name in models:
@@ -294,6 +407,7 @@ def main():
         def evaluation_task(item, _model=model_name):
             result = call_agent(item["input"], model_override=_model)
             return {
+                "input": item["input"],  # LLM 판사가 원��� 질문을 볼 수 있도록 전달
                 "output": f"[tools:{result['tool_calls_str']}] {result['output']}",
                 "expected_tool": item.get("expected_tool", ""),
                 "category": item.get("category", ""),
@@ -307,6 +421,7 @@ def main():
                 ToolUsageMetric(),
                 ResponseQualityMetric(),
                 ResponseCompletenessMetric(),
+                LLMJudgeMetric(),
             ],
             experiment_name=f"jw-agent-eval-{model_name}",
             project_name="jw-project",

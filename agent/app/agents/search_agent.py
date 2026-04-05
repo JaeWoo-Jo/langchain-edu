@@ -14,8 +14,10 @@ from langgraph.graph import StateGraph, START, END
 from app.agents.tools._es_common import (
     CONTENT_FIELD,
     RAG_CONTENT_FIELD,
+    RAG_VECTOR_FIELD,
     TOP_K,
     format_price_hits,
+    get_embeddings,
     get_es_client,
     get_price_index,
     get_rag_index,
@@ -56,7 +58,6 @@ def match_search(state: SearchState) -> dict:
                         }
                     }
                 },
-                "sort": [{"date": {"order": "desc"}}],
                 "size": TOP_K,
             },
         )
@@ -78,9 +79,9 @@ def multi_match_search(state: SearchState) -> dict:
                         "query": state["query"],
                         "fields": ["item_name", "kind_name"],
                         "type": "best_fields",
+                        "minimum_should_match": "75%",
                     }
                 },
-                "sort": [{"date": {"order": "desc"}}],
                 "size": TOP_K,
             },
         )
@@ -91,9 +92,10 @@ def multi_match_search(state: SearchState) -> dict:
 
 
 def rag_search(state: SearchState) -> dict:
-    """RAG 문서 인덱스(edu-price-info)에서 BM25 검색."""
+    """RAG 문서 인덱스(edu-price-info)에서 BM25 + kNN 하이브리드 검색."""
     es = get_es_client()
     try:
+        query_vector = get_embeddings().embed_query(state["query"])
         resp = es.search(
             index=get_rag_index(),
             body={
@@ -105,6 +107,12 @@ def rag_search(state: SearchState) -> dict:
                         }
                     }
                 },
+                "knn": {
+                    "field": RAG_VECTOR_FIELD,
+                    "query_vector": query_vector,
+                    "k": TOP_K,
+                    "num_candidates": TOP_K * 10,
+                },
                 "size": TOP_K,
             },
         )
@@ -115,14 +123,28 @@ def rag_search(state: SearchState) -> dict:
 
 
 def merge_results(state: SearchState) -> dict:
-    """Match + Multi-match + RAG 검색 결과를 병합하고 중복을 제거한다."""
-    seen: set[str] = set()
+    """Match + Multi-match + RAG 검색 결과를 병합하고 중복을 제거한다.
+
+    가격 데이터는 item_name + kind_name 기준으로 중복 제거하여 같은 품목이
+    날짜만 다르게 여러 건 나오는 것을 방지한다. RAG 문서는 _id 기준.
+    """
+    seen_prices: set[str] = set()
+    seen_rag: set[str] = set()
     merged: list[dict] = []
-    for hit in state["match_hits"] + state["multi_hits"] + state["rag_hits"]:
-        doc_id = hit.get("_id", "")
-        if doc_id and doc_id not in seen:
-            seen.add(doc_id)
+
+    for hit in state["match_hits"] + state["multi_hits"]:
+        source = hit.get("_source", {})
+        key = f"{source.get('item_name', '')}_{source.get('kind_name', '')}"
+        if key and key not in seen_prices:
+            seen_prices.add(key)
             merged.append(hit)
+
+    for hit in state["rag_hits"]:
+        doc_id = hit.get("_id", "")
+        if doc_id and doc_id not in seen_rag:
+            seen_rag.add(doc_id)
+            merged.append(hit)
+
     return {"merged_hits": merged[:TOP_K]}
 
 
@@ -204,7 +226,7 @@ _search_graph = _build_search_graph()
 
 @tool
 def search(search_query: str) -> str:
-    """가격 정보를 통합 검색하여 가장 관련성 높은 결과를 반환합니다.
-    품목명, 품종명 등으로 검색할 수 있습니다."""
+    """가격 + 레시피·영양·식재료 문서를 함께 검색합니다.
+    요리 추천이나 식재료 정보가 필요할 때 사용."""
     result = _search_graph.invoke({"query": search_query})
     return result["result"]

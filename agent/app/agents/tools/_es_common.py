@@ -14,6 +14,7 @@ from elasticsearch import Elasticsearch
 CONTENT_FIELD = "item_name"
 TOP_K = 10
 RAG_CONTENT_FIELD = "content"
+RAG_VECTOR_FIELD = "content_vector"
 
 # ---------------------------------------------------------------------------
 # 싱글턴 인스턴스
@@ -50,6 +51,23 @@ def get_rag_index() -> str:
     return settings.ELASTICSEARCH_INDEX_RAG
 
 
+_embeddings = None
+
+
+def get_embeddings():
+    """OpenAI 임베딩 모델 (싱글턴)."""
+    global _embeddings
+    if _embeddings is None:
+        from langchain_openai import OpenAIEmbeddings
+        from app.core.config import settings
+
+        _embeddings = OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            api_key=settings.OPENAI_API_KEY,
+        )
+    return _embeddings
+
+
 def format_price_hits(hits: list[dict]) -> str:
     """Elasticsearch 가격 검색 결과를 읽기 좋은 문자열로 포맷팅한다."""
     if not hits:
@@ -57,7 +75,7 @@ def format_price_hits(hits: list[dict]) -> str:
     results: list[str] = []
     for i, hit in enumerate(hits, 1):
         src = hit["_source"]
-        score = hit.get("_score", 0)
+        score = hit.get("_score") or 0
         today = src.get("price_today", 0)
         one_week = src.get("price_1week_ago", 0)
         one_month = src.get("price_1month_ago", 0)

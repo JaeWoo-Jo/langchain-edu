@@ -15,7 +15,10 @@ def compare_prices(item_name: str, period: str = "1주") -> str:
         item_name: 비교할 품목명
         period: 비교 기간 (예: "1주", "2주", "1개월")
     """
-    client = get_es_client()
+    try:
+        client = get_es_client()
+    except Exception:
+        return "가격 데이터 서버에 연결할 수 없습니다. 잠시 후 다시 시도해주세요."
     query = {
         "query": {
             "match": {
@@ -25,7 +28,10 @@ def compare_prices(item_name: str, period: str = "1주") -> str:
         "sort": [{"date": {"order": "desc"}}],
         "size": 10,
     }
-    result = client.search(index=get_price_index(), body=query)
+    try:
+        result = client.search(index=get_price_index(), body=query)
+    except Exception:
+        return f"'{item_name}' 비교 데이터 조회 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
     hits = result.get("hits", {}).get("hits", [])
 
     if not hits:
