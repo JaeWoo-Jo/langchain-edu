@@ -112,3 +112,106 @@ def advance_step(state: DeepAgentState) -> dict:
         return {"current_step": ""}
     next_step = plan.pop(0)
     return {"plan": plan, "current_step": next_step}
+
+
+def planner(state: DeepAgentState, model: ChatOpenAI) -> dict:
+    """사용자 질문을 분석하여 실행 계획을 수립한다."""
+    planner_llm = model.with_structured_output(Plan)
+
+    user_msgs = [m for m in state["messages"] if isinstance(m, HumanMessage)]
+    user_content = user_msgs[-1].content if user_msgs else ""
+
+    prompt = f"사용자 질문: {user_content}"
+    if state.get("step_results"):
+        prompt += "\n\n이전 실행 결과:\n" + "\n".join(state["step_results"])
+
+    result = planner_llm.invoke([
+        SystemMessage(content=PLANNER_PROMPT),
+        HumanMessage(content=prompt),
+    ])
+
+    steps = result.steps
+    first_step = steps[0] if steps else ""
+    remaining = steps[1:] if len(steps) > 1 else []
+
+    plan_text = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(steps))
+
+    return {
+        "plan": remaining,
+        "current_step": first_step,
+        "messages": [AIMessage(content=f"[계획 수립] {len(steps)}단계:\n{plan_text}")],
+    }
+
+
+def executor(state: DeepAgentState, model: ChatOpenAI) -> dict:
+    """현재 단계를 실행하기 위해 도구를 호출한다."""
+    executor_llm = model.bind_tools(TOOLS)
+
+    step = state.get("current_step", "")
+    results_ctx = "\n".join(state.get("step_results", []))
+
+    instruction = f"현재 실행할 단계: {step}"
+    if results_ctx:
+        instruction += f"\n\n이전 단계 실행 결과:\n{results_ctx}"
+
+    response = executor_llm.invoke(
+        [SystemMessage(content=EXECUTOR_PROMPT + "\n\n" + instruction)]
+        + list(state["messages"])
+    )
+
+    return {"messages": [response]}
+
+
+def reflector(state: DeepAgentState, model: ChatOpenAI) -> dict:
+    """실행 결과를 평가하고 다음 행동을 결정한다."""
+    reflector_llm = model.with_structured_output(Reflection)
+
+    # 최근 도구 결과 추출
+    recent_results: list[str] = []
+    for msg in reversed(state["messages"]):
+        if isinstance(msg, ToolMessage):
+            recent_results.insert(0, f"[{msg.name}] {msg.content[:300]}")
+        elif isinstance(msg, AIMessage) and "[계획" in getattr(msg, "content", ""):
+            break
+
+    step = state.get("current_step", "")
+    step_summary = f"{step}: " + (
+        recent_results[-1] if recent_results else "결과 없음"
+    )
+
+    context = (
+        f"현재 단계: {step}\n"
+        f"남은 단계: {state.get('plan', [])}\n"
+        f"이 단계 도구 결과:\n" + "\n".join(recent_results)
+    )
+
+    result = reflector_llm.invoke([
+        SystemMessage(content=REFLECTOR_PROMPT),
+        HumanMessage(content=context),
+    ])
+
+    update: dict = {
+        "step_results": [step_summary],
+        "messages": [AIMessage(content=f"[평가] {result.evaluation}")],
+    }
+
+    if result.action == "replan" and result.revised_remaining_steps:
+        update["plan"] = result.revised_remaining_steps
+    elif result.action == "done":
+        update["plan"] = []
+
+    return update
+
+
+def synthesizer(state: DeepAgentState, model: ChatOpenAI) -> dict:
+    """모든 결과를 종합하여 최종 응답을 생성한다."""
+    user_msgs = [m for m in state["messages"] if isinstance(m, HumanMessage)]
+    user_content = user_msgs[-1].content if user_msgs else ""
+    results = "\n".join(state.get("step_results", []))
+
+    response = model.invoke([
+        SystemMessage(content=SYNTHESIZER_PROMPT),
+        HumanMessage(content=f"사용자 질문: {user_content}\n\n수집된 정보:\n{results}"),
+    ])
+
+    return {"response": response.content}
