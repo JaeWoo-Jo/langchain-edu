@@ -323,41 +323,51 @@ class LLMJudgeMetric(base_metric.BaseMetric):
 # ============================================================
 
 def call_agent(input_text: str, model_override: str = None) -> dict:
-    """에이전트를 호출하고 전체 응답을 수집"""
-    from app.services.agent_service import AgentService
+    """에이전트를 직접 호출하여 응답을 수집 (SQLite 미사용 — InMemorySaver)"""
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import HumanMessage
+    from langgraph.errors import GraphRecursionError
+    from pydantic import SecretStr
     from app.core.config import settings
+    from app.agents.price_agent import create_price_agent
 
-    # 모델 오버라이드
-    if model_override:
-        original_model = settings.OPENAI_MODEL
-        settings.OPENAI_MODEL = model_override
-
-    service = AgentService()
-    thread_id = uuid.uuid4()
+    model_name = model_override or settings.OPENAI_MODEL
+    llm = ChatOpenAI(model=model_name, api_key=SecretStr(settings.OPENAI_API_KEY))
+    # InMemorySaver 자동 적용 (checkpointer=None)
+    agent = create_price_agent(model=llm)
 
     tool_calls = []
     final_content = ""
 
     async def _run():
         nonlocal final_content, tool_calls
-        async for chunk_str in service.process_query(input_text, thread_id):
-            try:
-                chunk = json.loads(chunk_str)
-            except (json.JSONDecodeError, TypeError):
-                continue
-            step = chunk.get("step", "")
-            if step == "model" and chunk.get("tool_calls"):
-                tool_calls.extend(chunk["tool_calls"])
-            if step == "tools" and chunk.get("name"):
-                tool_calls.append(chunk["name"])
-            if step == "done":
-                final_content = chunk.get("content", "")
+        config = {"configurable": {"thread_id": str(uuid.uuid4())}, "recursion_limit": 40}
+        try:
+            async for chunk in agent.astream(
+                {"messages": [HumanMessage(content=input_text)]},
+                config=config,
+                stream_mode="updates",
+            ):
+                for node_name, event in chunk.items():
+                    if not event:
+                        continue
+                    messages = event.get("messages", [])
+                    # 도구 호출 기록
+                    if node_name == "executor" and messages:
+                        tc = getattr(messages[0], "tool_calls", None)
+                        if tc:
+                            tool_calls.extend([t["name"] for t in tc])
+                    # 도구 실행 결과 기록
+                    if node_name == "tools" and messages:
+                        tool_calls.append(messages[0].name)
+                    # 최종 응답
+                    if node_name == "synthesizer":
+                        final_content = event.get("response", "")
+        except GraphRecursionError:
+            if not final_content:
+                final_content = "재귀 한도 도달로 완전한 응답을 생성하지 못했습니다."
 
     asyncio.run(_run())
-
-    # 모델 원복
-    if model_override:
-        settings.OPENAI_MODEL = original_model
 
     return {
         "output": final_content,

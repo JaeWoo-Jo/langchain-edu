@@ -20,7 +20,7 @@ from config import NUTRITION_DIR
 API_BASE = "https://apis.data.go.kr/1471000/FoodNtrCpntDbInfo02/getFoodNtrCpntDbInq02"
 # 공공데이터 포털 인증키 (URL 인코딩된 상태로 사용)
 DATA_GO_KR_KEY = "g6JAyYA1Rw3V5kKpRO52c4FjsbfFx8XedX8G+L2mMgunFRdMEB03lnF1mw3H71LupTA/RdjiYkqYbWB8Xr/APA=="
-PAGE_SIZE = 100
+PAGE_SIZE = 500
 
 
 def fetch_nutrition(api_key: str, page_no: int, num_of_rows: int) -> list[dict]:
@@ -66,8 +66,18 @@ def download_all_nutrition(api_key: str, max_count: int | None = None):
         total = min(total, max_count)
     print(f"전체 식품 수: {total}")
 
+    output_path = NUTRITION_DIR / "nutrition.json"
+    # 기존 데이터 이어받기
     all_items: list[dict] = []
-    page_no = 1
+    if output_path.exists():
+        existing = json.loads(output_path.read_text(encoding="utf-8"))
+        if isinstance(existing, list):
+            all_items = existing
+            print(f"  기존 데이터 {len(all_items)}건 로드")
+
+    page_no = len(all_items) // PAGE_SIZE + 1
+    save_interval = 1000  # 1000건마다 중간 저장
+
     while len(all_items) < total:
         remaining = total - len(all_items)
         rows = min(PAGE_SIZE, remaining)
@@ -80,11 +90,18 @@ def download_all_nutrition(api_key: str, max_count: int | None = None):
         except Exception as e:
             print(f"  오류 발생 (페이지 {page_no}): {e}")
         page_no += 1
-        time.sleep(0.5)
+        time.sleep(0.1)
 
-    output_path = NUTRITION_DIR / "nutrition.json"
+        # 중간 저장
+        if len(all_items) % save_interval < PAGE_SIZE:
+            output_path.write_text(
+                json.dumps(all_items, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            print(f"  [중간 저장] {len(all_items)}건")
+
     output_path.write_text(
-        json.dumps(all_items, ensure_ascii=False, indent=2),
+        json.dumps(all_items, ensure_ascii=False),
         encoding="utf-8",
     )
     print(f"저장 완료: {output_path} ({len(all_items)}건)")

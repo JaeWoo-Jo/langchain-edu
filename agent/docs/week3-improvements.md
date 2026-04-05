@@ -221,3 +221,71 @@ uv run python tests/generate_report.py --week 4   # 4주차
 - ES 클라이언트 생성 실패 → "가격 데이터 서버에 연결할 수 없습니다" 반환
 - 검색 쿼리 실패 → "'{품목명}' 검색 중 오류가 발생했습니다" 반환
 - 3개 도구 모두 동일 패턴 적용
+
+---
+
+## 개선 10: Reflector replan 무한 루프 수정
+
+**파일:** `app/agents/prompts.py` (REFLECTOR_PROMPT)
+
+**문제:** "시설 감자 들어간 요리" 같은 질문에서 reflector가 "레시피 정보 불충분 → replan"을 반복하여 무한 루프에 빠짐.
+검색 결과에 감자 레시피가 있지만 "시설 감자"라는 정확한 표현이 없어서 reflector가 계속 불충분으로 판단.
+Opik에서 에러로 기록됨.
+
+**원인:** REFLECTOR_PROMPT에 replan 판단 기준이 너무 관대함. 부분적 결과가 있어도 replan을 시도.
+
+**변경 내용:**
+REFLECTOR_PROMPT에 규칙 추가:
+- 부분적으로라도 유용한 정보가 있으면 done으로 판단
+- 완벽하지 않아도 있는 정보로 답변할 수 있으면 done
+- replan은 결과가 완전히 비어있거나 오류일 때만 사용
+
+**효과 ("시설 감자 들어간 요리" 테스트):**
+
+| | 수정 전 | 수정 후 |
+|---|---|---|
+| reflect 횟수 | 5회 (replan 루프) | 1회 |
+| tool 호출 | 2회 (같은 search 반복) | 1회 |
+| 응답 시간 | ~45초 | ~3초 |
+| Opik 상태 | 에러 | 정상 |
+
+---
+
+## 개선 11: Reflector replan 무한 루프 근본 해결
+
+**���일:** `app/agents/prompts.py`, `app/agents/deep_agent.py`
+
+**문제:** 개선 10에서 REFLECTOR_PROMPT를 수정했지만 여전히 다양한 질문에서 replan 루프 발생.
+19개 질문 테스트 중 8개 ERROR (reflect 3~6회, 응답 13~24초).
+
+**에러 패턴:**
+- 레시피 상세 요청 ("감자전 만드는 법") → 레시피가 있지만 "구체적 조리법 부족" 판단
+- 복��� 비교+추천 → 각 단계마다 replan
+- 모호한 질문 ("뭐 먹지") → "사용자 의도 불명확" 판단
+- 도메인 외 ("김치찌개 맛집") → 맛집 정보 없어서 계속 replan
+
+**수정 1: REFLECTOR_PROMPT 전�� 재작성**
+- "1건이라도 데이터가 있으면 → done" 규칙 명시
+- "도메인 밖이면 → done" 규칙 명시
+- replan 조건을 "결과가 완전히 비어있고(0건)" 경우로 극도로 제한
+
+**수정 2: 코드 안전장치 (deep_agent.py)**
+- `MAX_REPLAN = 1` 상수 추가
+- `replan_count` 상태 필드 추가
+- reflector에서 replan 시 `replan_count` 체크 → 한도 초과 시 강제 done
+
+**효과 (이전 에러 10개 질문 재테스트):**
+
+| 질문 | 수정 전 | 수정 후 |
+|------|---------|---------|
+| 유기농 쌀로 밥 짓는 법 | ERROR 22s reflect=4 | OK 8s reflect=1 |
+| 쌀이랑 감자 중 싼 걸로 추천 | ERROR 19s reflect=5 | OK 7s reflect=1 |
+| 뭐 먹지 | ERROR 13s reflect=3 | OK 5s reflect=1 |
+| 배고파 | ERROR 14s reflect=3 | OK 9s reflect=1 |
+| 감자전 만드는 법 | ERROR 18s reflect=4 | OK 4s reflect=1 |
+| 콩나물국 레시피 | ERROR 24s reflect=3 | OK 12s reflect=2 |
+| 맛있는거 | ERROR 18s reflect=3 | OK 5s reflect=1 |
+| 고구마 가격이랑 요리법 | ERROR 21s reflect=6 | OK 9s reflect=2 |
+| 김치찌개 맛집 | ERROR 18s reflect=4 | OK 6s reflect=1 |
+| 시설 감자 들어간 요리 | ERROR 45s reflect=5 | OK 6s reflect=1 |
+| **결과** | **10/10 ERROR** | **10/10 OK** |

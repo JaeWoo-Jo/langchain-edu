@@ -32,6 +32,9 @@ from app.agents.tools import search_price, compare_prices, create_price_chart
 # ---------------------------------------------------------------------------
 
 
+MAX_REPLAN = 1  # replan 최대 허용 횟수
+
+
 class DeepAgentState(TypedDict):
     """딥에이전트 상태.
 
@@ -39,6 +42,7 @@ class DeepAgentState(TypedDict):
     - plan: 남은 실행 단계 목록
     - current_step: 현재 실행 중인 단계 설명
     - step_results: 각 단계 실행 결과 요약 (operator.add 리듀서로 자동 누적)
+    - replan_count: replan 횟수 추적
     - response: 최종 응답 텍스트
     """
 
@@ -46,6 +50,7 @@ class DeepAgentState(TypedDict):
     plan: list[str]
     current_step: str
     step_results: Annotated[list[str], operator.add]
+    replan_count: int
     response: str
 
 
@@ -195,8 +200,15 @@ def reflector(state: DeepAgentState, model: ChatOpenAI) -> dict:
         "messages": [AIMessage(content=f"[평가] {result.evaluation}")],
     }
 
+    current_replan = state.get("replan_count", 0)
+
     if result.action == "replan" and result.revised_remaining_steps:
-        update["plan"] = result.revised_remaining_steps
+        if current_replan < MAX_REPLAN:
+            update["plan"] = result.revised_remaining_steps
+            update["replan_count"] = current_replan + 1
+        else:
+            # replan 한도 초과 → 강제 done
+            update["plan"] = []
     elif result.action == "done":
         update["plan"] = []
 
