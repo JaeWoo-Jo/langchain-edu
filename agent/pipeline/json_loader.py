@@ -73,35 +73,36 @@ def load_recipe_json(file_path: str | Path) -> list[Document]:
 def load_nutrition_json(file_path: str | Path) -> list[Document]:
     """영양성분 JSON 파일을 Document 리스트로 변환한다.
 
-    식품안전나라 I2790 API 응답 구조 기준.
+    공공데이터 포털 FoodNtrCpntDbInfo02 API 응답 구조 기준.
     """
     file_path = Path(file_path)
     raw = json.loads(file_path.read_text(encoding="utf-8"))
     if isinstance(raw, dict):
-        raw = raw.get("row", raw.get("data", [raw]))
+        raw = raw.get("items", raw.get("row", raw.get("data", [raw])))
 
     documents: list[Document] = []
     for item in raw:
-        name = item.get("DESC_KOR", "")
+        # 공공데이터 포털 필드명 우선, 식품안전나라 필드명 fallback
+        name = item.get("FOOD_NM_KR", "") or item.get("DESC_KOR", "")
         if not name:
             continue
 
         serving = item.get("SERVING_SIZE", "100")
-        parts = [f"[{name}] (1회 제공량: {serving}g)"]
+        parts = [f"[{name}] (1회 제공량: {serving})"]
 
-        for key, label in [
-            ("NUTR_CONT1", "칼로리(kcal)"),
-            ("NUTR_CONT2", "탄수화물(g)"),
-            ("NUTR_CONT3", "단백질(g)"),
-            ("NUTR_CONT4", "지방(g)"),
-            ("NUTR_CONT5", "당류(g)"),
-            ("NUTR_CONT6", "나트륨(mg)"),
+        for key, fallback_key, label in [
+            ("AMT_NUM1", "NUTR_CONT1", "칼로리(kcal)"),
+            ("AMT_NUM6", "NUTR_CONT2", "탄수화물(g)"),
+            ("AMT_NUM3", "NUTR_CONT3", "단백질(g)"),
+            ("AMT_NUM4", "NUTR_CONT4", "지방(g)"),
+            ("AMT_NUM7", "NUTR_CONT5", "당류(g)"),
+            ("AMT_NUM13", "NUTR_CONT6", "나트륨(mg)"),
         ]:
-            val = item.get(key, "")
+            val = item.get(key, "") or item.get(fallback_key, "")
             if val:
                 parts.append(f"- {label}: {val}")
 
-        category = item.get("GROUP_NAME", "기타")
+        category = item.get("FOOD_CAT1_NM", "") or item.get("GROUP_NAME", "기타")
 
         documents.append(Document(
             page_content="\n".join(parts),
