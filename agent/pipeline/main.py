@@ -28,7 +28,13 @@ def collect_files(data_dir: str, source: str = "all") -> list[Path]:
     elif source == "ingredients":
         search_dir = INGREDIENTS_DIR
     else:
-        search_dir = Path(data_dir)
+        # all: 가격 도메인 데이터 디렉토리만 스캔 (의료 문서 제외)
+        files = []
+        for d in [RECIPES_DIR, NUTRITION_DIR, INGREDIENTS_DIR]:
+            if d.exists():
+                for ext in SUPPORTED_EXTENSIONS:
+                    files.extend(d.rglob(f"*{ext}"))
+        return sorted(files)
 
     files = []
     for ext in SUPPORTED_EXTENSIONS:
