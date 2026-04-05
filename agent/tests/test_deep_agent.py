@@ -279,3 +279,35 @@ class TestSynthesizer:
         call_args = mock_model.invoke.call_args[0][0]
         user_content = call_args[-1].content
         assert "배추 무 비교해줘" in user_content
+
+
+# ---------------------------------------------------------------------------
+# 그래프 조립 테스트
+# ---------------------------------------------------------------------------
+
+
+class TestCreateDeepAgent:
+    def test_그래프가_정상_컴파일(self):
+        from app.agents.deep_agent import create_deep_agent
+
+        mock_model = MagicMock()
+        graph = create_deep_agent(mock_model)
+        assert graph is not None
+
+    def test_checkpointer_전달(self):
+        from app.agents.deep_agent import create_deep_agent
+        from langgraph.checkpoint.base import BaseCheckpointSaver
+
+        mock_model = MagicMock()
+        mock_checkpointer = MagicMock(spec=BaseCheckpointSaver)
+        graph = create_deep_agent(mock_model, checkpointer=mock_checkpointer)
+        assert graph is not None
+
+    def test_그래프_노드_목록(self):
+        from app.agents.deep_agent import create_deep_agent
+
+        mock_model = MagicMock()
+        graph = create_deep_agent(mock_model)
+        node_names = set(graph.get_graph().nodes.keys())
+        expected = {"__start__", "__end__", "planner", "executor", "tools", "reflector", "advance_step", "synthesizer"}
+        assert expected.issubset(node_names)

@@ -215,3 +215,42 @@ def synthesizer(state: DeepAgentState, model: ChatOpenAI) -> dict:
     ])
 
     return {"response": response.content}
+
+
+# ---------------------------------------------------------------------------
+# Graph Builder
+# ---------------------------------------------------------------------------
+
+
+def create_deep_agent(
+    model: ChatOpenAI,
+    checkpointer: BaseCheckpointSaver | None = None,
+):
+    """Plan-Execute-Reflect 딥에이전트 그래프를 생성한다."""
+    tool_node = ToolNode(TOOLS)
+
+    builder = StateGraph(DeepAgentState)
+
+    # 노드 등록
+    builder.add_node("planner", lambda s: planner(s, model))
+    builder.add_node("executor", lambda s: executor(s, model))
+    builder.add_node("tools", tool_node)
+    builder.add_node("reflector", lambda s: reflector(s, model))
+    builder.add_node("advance_step", advance_step)
+    builder.add_node("synthesizer", lambda s: synthesizer(s, model))
+
+    # 엣지 연결
+    builder.add_edge(START, "planner")
+    builder.add_edge("planner", "executor")
+    builder.add_conditional_edges("executor", after_executor)
+    builder.add_edge("tools", "executor")
+    builder.add_conditional_edges("reflector", after_reflector)
+    builder.add_edge("advance_step", "executor")
+    builder.add_edge("synthesizer", END)
+
+    # 컴파일
+    compile_kwargs = {}
+    if checkpointer is not None:
+        compile_kwargs["checkpointer"] = checkpointer
+
+    return builder.compile(**compile_kwargs)
