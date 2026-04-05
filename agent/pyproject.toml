@@ -13,7 +13,11 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "httpx>=0.25.0",
     "opik>=1.10.4",
-    "opensearch-py>=2.4.0",
+    "elasticsearch>=8.0.0",
+    "deepeval>=3.9.5",
+    "langgraph>=1.0.6",
+    "langgraph-checkpoint-sqlite>=3.0.3",
+    "cohere>=5.0.0",
 ]
 
 [build-system]

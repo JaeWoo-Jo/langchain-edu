@@ -23,12 +23,15 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str
     OPENAI_MODEL: str
     
-    # OpenSearch 설정
-    OPENSEARCH_HOST: str = "https://localhost:9200"
-    OPENSEARCH_USERNAME: str = "admin"
-    OPENSEARCH_PASSWORD: str = "admin"
-    OPENSEARCH_VERIFY_CERTS: bool = False
-    OPENSEARCH_INDEX_PRICES: str = "prices-daily-goods"
+    COHERE_API_KEY: str | None = None
+
+    # Elasticsearch 설정
+    ELASTICSEARCH_HOST: str = "https://elasticsearch-edu.didim365.app"
+    ELASTICSEARCH_USERNAME: str = "elastic"
+    ELASTICSEARCH_PASSWORD: str = "elastic"
+    ELASTICSEARCH_VERIFY_CERTS: bool = True
+    ELASTICSEARCH_INDEX_PRICES: str = "prices-daily-goods"
+    ELASTICSEARCH_INDEX_RAG: str = "edu-price-info"
 
     # 공공데이터 포털
     PUBLIC_DATA_API_KEY: str = ""
