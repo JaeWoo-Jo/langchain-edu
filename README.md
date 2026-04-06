@@ -139,7 +139,7 @@ LangChain ReAct    →    LangChain + LangGraph   →   LangGraph Deep Agent
     │
     ▼
 ┌─────────┐    계획 수립
-│ Planner │───→ "1. search_price(감자)  2. compare_prices(감자, 1주)"
+│ Planner │───→ "1. search_price(감자)  2. create_price_chart(감자)"
 └─────────┘
     │
     ▼
@@ -347,12 +347,12 @@ reflect│◄───│  │── 남은 단계 있음? ──► advance_ste
 ```
 클라이언트가 수신하는 SSE 이벤트 순서:
 
-  {"step":"plan",    "plan":["search_price(감자)","compare_prices(1주)"]}
+  {"step":"plan",    "plan":["search_price(감자)","create_price_chart(감자)"]}
   {"step":"model",   "tool_calls":["search_price"]}
   {"step":"tools",   "name":"search_price", "content":{...}}
   {"step":"reflect", "content":"가격 정보 확보, 다음 단계 진행"}
-  {"step":"model",   "tool_calls":["compare_prices"]}
-  {"step":"tools",   "name":"compare_prices", "content":{...}}
+  {"step":"model",   "tool_calls":["create_price_chart"]}
+  {"step":"tools",   "name":"create_price_chart", "content":{...}}
   {"step":"reflect", "content":"모든 단계 완료"}
   {"step":"done",    "content":"감자 시세는...", "metadata":{...}}
 ```
@@ -415,7 +415,7 @@ reflect│◄───│  │── 남은 단계 있음? ──► advance_ste
 | 순서 | 질문 | 트리거되는 장치 |
 |------|------|---------------|
 | Q1 | 월급은 안 오르는데 물가는 오르네... 요즘 뭐가 싸? | Planner 카테고리→품목 분해, search_price x4 |
-| Q2 | 감자 vs 양파 가격 대결! 누가 이겨? | 다품목 분리 검색, compare_prices 테이블 |
+| Q2 | 감자 vs 양파 가격 대결! 누가 이겨? | 다품목 분리 검색 (search_price x2), 결과 종합 |
 | Q3 | 양파가 금값이라던데 진짜야? 추이 보여줘 | create_price_chart 차트 렌더링 |
 | Q4 | 양파가 싸다고? 그럼 오늘 저녁은 양파 파티다! 뭐 해먹지? | search RAG 통합검색 |
 
@@ -427,8 +427,8 @@ reflect│◄───│  │── 남은 단계 있음? ──► advance_ste
 
 ### Q2. "감자 vs 양파 가격 대결! 누가 이겨?"
 
-- 계획: search_price("감자") → search_price("양파") → compare_prices
-- 비교 테이블 렌더링 (UI 그리드)
+- 계획: search_price("감자") → search_price("양파") → 결과 종합
+- Synthesizer가 두 품목 가격을 비교 정리
 - **포인트**: 다품목 비교 시 각 품목을 별도 단계로 분리 (초기 매칭 실패 문제 해결)
 
 ### Q3. "양파가 금값이라던데 진짜야? 추이 보여줘"
