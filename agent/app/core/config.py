@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     ELASTICSEARCH_PASSWORD: str = "elastic"
     ELASTICSEARCH_VERIFY_CERTS: bool = True
     ELASTICSEARCH_INDEX_PRICES: str = "prices-daily-goods"
-    ELASTICSEARCH_INDEX_RAG: str = "edu-price-info"
+    ELASTICSEARCH_INDEX_RAG: str = "edu-recipe-rag"
     ELASTICSEARCH_INDEX_NUTRITION: str = "nutrition-info"
 
     # 공공데이터 포털

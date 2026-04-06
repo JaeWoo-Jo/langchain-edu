@@ -8,7 +8,7 @@ load_dotenv()
 ES_URL = os.getenv("ES_URL", "https://elasticsearch-edu.didim365.app")
 ES_USER = os.getenv("ES_USER", "elastic")
 ES_PASSWORD = os.getenv("ES_PASSWORD", "")
-ES_INDEX = os.getenv("ES_INDEX", "edu-price-info")
+ES_INDEX = os.getenv("ES_INDEX", "edu-recipe-rag")
 
 # 데이터 디렉토리
 DATA_DIR = Path(__file__).parent / "data"
