@@ -124,17 +124,17 @@
 
 #### 각 장치의 도입 근거
 
-| 장치 | 문제 상황 | 도입 효과 |
-|------|----------|----------|
-| **Plan-Execute-Reflect** | 단순 ReAct 패턴으로는 "가격+차트+요리" 같은 복합 질문을 체계적으로 처리할 수 없었음 | 계획→실행→평가 분리로 복합 질문을 단계별로 처리 |
-| **Structured Output** | LLM이 자유 텍스트로 계획/평가를 반환하면 파싱 실패, 라우팅 판정 불가 | `Plan(steps=[...])`, `Reflection(action="done")` 구조체로 안정적 분기 |
-| **3-way 병렬 검색** | BM25 단일 검색으로는 "감자 요리" 같은 의미적 유사 문서 누락 | match + multi_match + kNN 병렬 → 정확도와 재현율 동시 확보 |
-| **조건부 라우팅** | 도구 호출 유무, 남은 단계 유무에 따라 다음 노드가 달라짐 | `after_executor`, `after_reflector`로 동적 분기 자동화 |
-| **MAX_REPLAN=1** | Reflector가 "불충분"을 반복 판정 → replan 5~6회, 응답 45초 (3주차 발견) | 코드 안전장치로 무한 루프 원천 차단, 45초→3초 |
-| **recursion_limit 폴백** | 에이전트가 재귀 제한 도달 시 에러로 중단됨 | `GraphRecursionError` catch → 수집된 정보로 LLM 폴백 답변 생성 |
-| **3단계 에러 처리** | ES 연결 실패 시 "처리 중 오류" 한 줄만 표시 → 원인 파악 불가 (3주차 발견) | 연결/검색/결과없음 각각 구체적 사용자 안내 메시지 |
-| **Checkpointer (SQLite)** | AgentService를 매 요청마다 생성 → InMemorySaver 초기화 → 대화 이력 소실 (코드 리뷰에서 발견) | 싱글턴 + SQLite 체크포인터로 멀티턴 대화 유지 |
-| **SSE 스트리밍** | 에이전트 처리 5~15초 → 사용자가 빈 화면만 보고 대기 | 중간 단계(plan→model→tools→reflect)를 실시간 표시하여 대기 UX 개선 |
+| 장치 | 문제 상황 | 도입 효과 | 수정 파일 |
+|------|----------|----------|----------|
+| **Plan-Execute-Reflect** | 단순 ReAct로는 "가격+차트+요리" 복합 질문 처리 불가 | 계획→실행→평가 분리로 단계별 처리 | `deep_agent.py` |
+| **Structured Output** | LLM 자유 텍스트 → 파싱 실패, 라우팅 판정 불가 | `Plan`, `Reflection` 구조체로 안정적 분기 | `deep_agent.py` |
+| **3-way 병렬 검색** | BM25 단일 검색 → 의미적 유사 문서 누락 | match + multi_match + kNN 병렬 | `search_agent.py` |
+| **조건부 라우팅** | 도구 호출 유무, 남은 단계 유무에 따라 분기 필요 | `after_executor`, `after_reflector` 자동 분기 | `deep_agent.py` |
+| **MAX_REPLAN=1** | Reflector replan 5~6회 반복, 응답 45초 (3주차 발견) | 무한 루프 원천 차단, 45초→3초 | `deep_agent.py` |
+| **recursion_limit 폴백** | 재귀 제한 도달 시 에러로 중단됨 | `GraphRecursionError` catch → LLM 폴백 답변 | `agent_service.py` |
+| **3단계 에러 처리** | ES 연결 실패 시 "처리 중 오류"만 표시 (3주차 발견) | 연결/검색/결과없음 각각 구체적 안내 | `tools/*.py` |
+| **Checkpointer (SQLite)** | 매 요청 AgentService 생성 → 대화 이력 소실 (코드 리뷰 발견) | 싱글턴 + SQLite로 멀티턴 유지 | `chat.py`, `agent_service.py` |
+| **SSE 스트리밍** | 에이전트 처리 5~15초 → 빈 화면 대기 | plan→model→tools→reflect 실시간 표시 | `agent_service.py`, `chat.py` |
 
 아래에서 각 요소를 상세히 설명합니다.
 
