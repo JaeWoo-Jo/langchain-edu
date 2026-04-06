@@ -87,6 +87,57 @@
 
 ## 3. 코드 소개
 
+### 전체 구성 요소
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Deep Agent (LangGraph StateGraph)                                   │
+│                                                                     │
+│  ◆ LLM 노드 (4개) ─────────────────────────────────────────────     │
+│  │  Planner    → 계획 수립   (structured output: Plan)              │
+│  │  Executor   → 도구 호출   (bind_tools)                           │
+│  │  Reflector  → 결과 평가   (structured output: Reflection)        │
+│  │  Synthesizer→ 최종 답변   (★ 자취고수 페르소나)                    │
+│  │                                                                  │
+│  ◆ 도구 (4종) ──────────────────────────────────────────────────     │
+│  │  search_price      품목 최신 시세 조회         → ES 가격 인덱스   │
+│  │  compare_prices    기간별 가격 비교 테이블      → ES 가격 인덱스   │
+│  │  create_price_chart 가격 추이 차트 (Highcharts) → ES 가격 인덱스  │
+│  │  search            통합 검색 서브에이전트        → ES 가격+RAG    │
+│  │                    (LangGraph 3-way 병렬)                        │
+│  │                                                                  │
+│  ◆ 라우팅 장치 ─────────────────────────────────────────────────     │
+│  │  after_executor   도구 호출 있음 → Tools / 없음 → Reflector      │
+│  │  after_reflector  남은 단계 있음 → advance_step / 없음 → 종료    │
+│  │                                                                  │
+│  ◆ 안전 장치 ───────────────────────────────────────────────────     │
+│  │  MAX_REPLAN=1          replan 무한 루프 방지 (최대 1회)           │
+│  │  recursion_limit=40    GraphRecursionError 시 LLM 폴백 응답      │
+│  │  3단계 에러 처리        ES 연결/검색/결과없음 각각 사용자 안내     │
+│  │                                                                  │
+│  ◆ 상태 관리 ───────────────────────────────────────────────────     │
+│     Checkpointer (SQLite)   대화 이력 저장 → 멀티턴 대화 유지       │
+│     Structured Output       Pydantic 모델로 LLM 출력 형식 강제      │
+│     SSE 스트리밍             plan→model→tools→reflect→done 실시간    │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### 각 장치의 도입 근거
+
+| 장치 | 문제 상황 | 도입 효과 |
+|------|----------|----------|
+| **Plan-Execute-Reflect** | 단순 ReAct 패턴으로는 "가격+차트+요리" 같은 복합 질문을 체계적으로 처리할 수 없었음 | 계획→실행→평가 분리로 복합 질문을 단계별로 처리 |
+| **Structured Output** | LLM이 자유 텍스트로 계획/평가를 반환하면 파싱 실패, 라우팅 판정 불가 | `Plan(steps=[...])`, `Reflection(action="done")` 구조체로 안정적 분기 |
+| **3-way 병렬 검색** | BM25 단일 검색으로는 "감자 요리" 같은 의미적 유사 문서 누락 | match + multi_match + kNN 병렬 → 정확도와 재현율 동시 확보 |
+| **조건부 라우팅** | 도구 호출 유무, 남은 단계 유무에 따라 다음 노드가 달라짐 | `after_executor`, `after_reflector`로 동적 분기 자동화 |
+| **MAX_REPLAN=1** | Reflector가 "불충분"을 반복 판정 → replan 5~6회, 응답 45초 (3주차 발견) | 코드 안전장치로 무한 루프 원천 차단, 45초→3초 |
+| **recursion_limit 폴백** | 에이전트가 재귀 제한 도달 시 에러로 중단됨 | `GraphRecursionError` catch → 수집된 정보로 LLM 폴백 답변 생성 |
+| **3단계 에러 처리** | ES 연결 실패 시 "처리 중 오류" 한 줄만 표시 → 원인 파악 불가 (3주차 발견) | 연결/검색/결과없음 각각 구체적 사용자 안내 메시지 |
+| **Checkpointer (SQLite)** | AgentService를 매 요청마다 생성 → InMemorySaver 초기화 → 대화 이력 소실 (코드 리뷰에서 발견) | 싱글턴 + SQLite 체크포인터로 멀티턴 대화 유지 |
+| **SSE 스트리밍** | 에이전트 처리 5~15초 → 사용자가 빈 화면만 보고 대기 | 중간 단계(plan→model→tools→reflect)를 실시간 표시하여 대기 UX 개선 |
+
+아래에서 각 요소를 상세히 설명합니다.
+
 ### 3-1. 페르소나
 
 **파일**: `agent/app/agents/prompts.py`
