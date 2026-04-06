@@ -30,11 +30,11 @@ LangChain ReAct    →    LangChain + LangGraph   →   LangGraph Deep Agent
 │ 직접 호출 │         │  _agent  │(3-way 병렬)    │ Synthesizer          │
 └──────────┘         └──────────┘                └──────────────────────┘
 
-문제:                  개선:                       개선:
-· 도구 5~6회 반복     · 검색 3종 병렬 실행          · 계획 수립 후 단계별 실행
-· 불필요한 차트 생성   · 중복 제거 + 노이즈 제거     · 자체 평가로 자가 교정
-· 복합 질문 처리 불가  · BM25 + kNN 하이브리드       · 구조화 출력으로 안정적 분기
-                                                  · MAX_REPLAN=1 무한 루프 방지
+문제:                    개선:                         개선:
+· 도구 5~6회 반복       · 검색 3종 병렬 실행            · 계획 수립 후 단계별 실행
+· 불필요한 차트 생성     · 중복 제거 + 노이즈 제거       · 자체 평가로 자가 교정
+· 복합 질문 처리 불가    · BM25 + kNN 하이브리드         · 구조화 출력으로 안정적 분기
+                                                      · MAX_REPLAN=1 무한 루프 방지
 ```
 
 ---
@@ -257,8 +257,8 @@ LangChain ReAct    →    LangChain + LangGraph   →   LangGraph Deep Agent
        │    │              Deep Agent (LangGraph StateGraph)        │
        │    │                                                      │
        │    │  ③ Planner (ChatOpenAI)                              │
-       │    │  │  "1. search_price(감자)  2. create_price_chart(감자)"│
-       │    │  │  → Plan(steps=[...]) 구조화 출력                   │
+       │    │  │  "search_price(감자), create_price_chart(감자)"  │
+       │    │  │  → Plan(steps=[...]) 구조화 출력                 │
        │    │  │                                                    │
   SSE  │    │  ▼                                                    │
  plan  │◄───│  ④ Executor (ChatOpenAI)  ◄───────────────────┐      │
@@ -275,8 +275,8 @@ LangChain ReAct    →    LangChain + LangGraph   →   LangGraph Deep Agent
        │    │  │── 도구 호출 없음                                    │
        │    │  ▼                                                    │
        │    │  ⑥ Reflector (ChatOpenAI)                             │
-       │    │  │  Reflection(action=continue/replan/done) 구조화 출력│
-       │    │  │  MAX_REPLAN=1 (무한 루프 방지)                      │
+       │    │  │  Reflection(continue/replan/done)                  │
+       │    │  │  MAX_REPLAN=1 (무한 루프 방지)                    │
        │    │  │                                                    │
 reflect│◄───│  │── 남은 단계 있음? ──► advance_step ──► Executor    │
        │    │  │                       plan에서 다음 단계 pop        │
