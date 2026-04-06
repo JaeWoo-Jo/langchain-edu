@@ -51,6 +51,13 @@ def get_rag_index() -> str:
     return settings.ELASTICSEARCH_INDEX_RAG
 
 
+def get_nutrition_index() -> str:
+    """영양성분 인덱스명을 반환한다."""
+    from app.core.config import settings
+
+    return settings.ELASTICSEARCH_INDEX_NUTRITION
+
+
 _embeddings = None
 
 

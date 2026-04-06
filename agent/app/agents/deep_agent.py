@@ -24,7 +24,7 @@ from app.agents.prompts import (
     SYNTHESIZER_PROMPT,
 )
 from app.agents.search_agent import search
-from app.agents.tools import search_price, compare_prices, create_price_chart
+from app.agents.tools import search_price, compare_prices, create_price_chart, search_nutrition
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ class Reflection(BaseModel):
 # Tools
 # ---------------------------------------------------------------------------
 
-TOOLS = [search, search_price, compare_prices, create_price_chart]
+TOOLS = [search, search_price, compare_prices, create_price_chart, search_nutrition]
 
 
 # ---------------------------------------------------------------------------
