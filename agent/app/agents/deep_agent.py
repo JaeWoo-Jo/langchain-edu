@@ -181,7 +181,7 @@ def reflector(state: DeepAgentState, model: ChatOpenAI) -> dict:
 
     step = state.get("current_step", "")
     step_summary = f"{step}: " + (
-        recent_results[-1] if recent_results else "결과 없음"
+        " | ".join(recent_results) if recent_results else "결과 없음"
     )
 
     context = (
@@ -219,7 +219,14 @@ def synthesizer(state: DeepAgentState, model: ChatOpenAI) -> dict:
     """모든 결과를 종합하여 최종 응답을 생성한다."""
     user_msgs = [m for m in state["messages"] if isinstance(m, HumanMessage)]
     user_content = user_msgs[-1].content if user_msgs else ""
-    results = "\n".join(state.get("step_results", []))
+
+    # step_results 외에 실제 ToolMessage 내용도 수집하여 데이터 유실 방지
+    tool_results = [
+        f"[{m.name}] {m.content[:500]}"
+        for m in state["messages"]
+        if isinstance(m, ToolMessage)
+    ]
+    results = "\n".join(tool_results) if tool_results else "\n".join(state.get("step_results", []))
 
     response = model.invoke([
         SystemMessage(content=SYNTHESIZER_PROMPT),

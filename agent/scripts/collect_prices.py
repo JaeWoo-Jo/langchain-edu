@@ -20,8 +20,17 @@ from app.utils.opensearch_client import get_elasticsearch_client
 INDEX_NAME = "prices-daily-goods"
 API_URL = "https://www.kamis.or.kr/service/price/xml.do"
 
+CATEGORIES = {
+    "100": "식량작물",
+    "200": "채소류",
+    "300": "특용작물",
+    "400": "과일류",
+    "500": "축산물",
+    "600": "수산물",
+}
 
-def fetch_prices(date: str):
+
+def fetch_prices(date: str, category_code: str | None = None):
     """KAMIS API에서 소매 가격 정보를 조회합니다."""
     params = {
         "action": "dailyPriceByCategoryList",
@@ -33,6 +42,8 @@ def fetch_prices(date: str):
         "p_cert_id": "didim365",
         "p_returntype": "json",
     }
+    if category_code:
+        params["p_item_category_code"] = category_code
     resp = httpx.get(API_URL, params=params, verify=False, follow_redirects=True)
     resp.raise_for_status()
     return resp.json()
@@ -105,16 +116,20 @@ def main():
     client = get_elasticsearch_client()
     create_index_if_not_exists(client)
 
-    data = fetch_prices(args.date)
-    items = data.get("data", {}).get("item", [])
+    total_count = 0
+    for code, name in CATEGORIES.items():
+        data = fetch_prices(args.date, category_code=code)
+        items = data.get("data", {}).get("item", [])
 
-    if not items or not isinstance(items, list):
-        print("수집할 데이터가 없습니다.")
-        print(f"API 응답: {data}")
-        return
+        if not items or not isinstance(items, list):
+            print(f"  {name}({code}): 데이터 없음")
+            continue
 
-    count = index_prices(client, items, args.date)
-    print(f"[수집 완료] {args.date} 데이터 {count}건 적재")
+        count = index_prices(client, items, args.date)
+        total_count += count
+        print(f"  {name}({code}): {count}건 적재")
+
+    print(f"[수집 완료] {args.date} 전체 {total_count}건 적재")
 
     # 적재 확인
     result = client.count(index=INDEX_NAME)
