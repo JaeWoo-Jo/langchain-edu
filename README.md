@@ -38,8 +38,8 @@ LangChain ReAct    →    LangChain + LangGraph   →   LangGraph Deep Agent
 │ ReAct      │       │ price    │                │ Planner → Executor   │
 │ Agent      │       │ _agent   │                │    ↕         ↕       │
 │            │       │    │     │                │ Reflector  Tools     │
-│ 모든 도구  │       │  search  │(서브에이전트)  │    ↓                 │
-│ 직접 호출  │       │  _agent  │(3-way 병렬)    │ Synthesizer          │
+│ all tools  │       │  search  │(sub-agent)     │    ↓                 │
+│ (direct)   │       │  _agent  │(3-way)         │ Synthesizer          │
 └────────────┘       └──────────┘                └──────────────────────┘
 
 문제:                    개선:                      개선:
@@ -269,35 +269,35 @@ LangChain ReAct    →    LangChain + LangGraph   →   LangGraph Deep Agent
        │    │              Deep Agent (LangGraph StateGraph)        │
        │    │                                                      │
        │    │  ③ Planner (ChatOpenAI)                              │
-       │    │  │  "search_price(감자), create_price_chart(감자)"   │
-       │    │  │  → Plan(steps=[...]) 구조화 출력                  │
+       │    │  │  "search_price(X), create_price_chart(X)"         │
+       │    │  │  → Plan(steps=[...]) structured output            │
        │    │  │                                                    │
   SSE  │    │  ▼                                                    │
  plan  │◄───│  ④ Executor (ChatOpenAI)  ◄───────────────────┐      │
-       │    │  │  현재 단계 실행, 도구 호출 결정                │  │
+       │    │  │  execute step, decide tool calls            │     │
        │    │  │                                             │      │
-       │    │  │── 도구 호출 있음? ──┐                        │    │
+       │    │  │── tool calls? ──────┐                        │    │
        │    │  │                    ▼                        │      │
  model │◄───│  │              ⑤ Tools (ToolNode)            │      │
-       │    │  │              │  search_price("감자") 실행    │    │
+       │    │  │              │  search_price("potato")       │    │
  tools │◄───│  │              │                              │      │
-       │    │  │              └──► Executor로 복귀 ───────────┘    │
-       │    │  │                   (도구 결과 반영, 루프 A)        │
+       │    │  │              └──► back to Executor ──────────┘    │
+       │    │  │                   (tool result applied, Loop A)   │
        │    │  │                                                    │
-       │    │  │── 도구 호출 없음                                  │
+       │    │  │── no tool calls                                   │
        │    │  ▼                                                    │
        │    │  ⑥ Reflector (ChatOpenAI)                             │
        │    │  │  Reflection(continue/replan/done)                  │
-       │    │  │  MAX_REPLAN=1 (무한 루프 방지)                    │
+       │    │  │  MAX_REPLAN=1 (prevent infinite loop)             │
        │    │  │                                                    │
-reflect│◄───│  │── 남은 단계 있음? ──► advance_step ──► Executor   │
-       │    │  │                       plan에서 다음 단계 pop      │
-       │    │  │                       (루프 B)                    │
+reflect│◄───│  │── remaining steps? ──► advance_step ──► Executor  │
+       │    │  │                       pop next step from plan     │
+       │    │  │                       (Loop B)                    │
        │    │  │                                                    │
-       │    │  │── 남은 단계 없음 (done)                           │
+       │    │  │── no remaining steps (done)                       │
        │    │  ▼                                                    │
        │    │  ⑦ Synthesizer (ChatOpenAI)                           │
-       │    │     최종 답변 + metadata (data, chart)               │
+       │    │     final answer + metadata (data, chart)            │
        │    └──────────────────────────────────────────────────────┘
        │                              │
   done │◄─────────────────────────────┘
@@ -330,27 +330,27 @@ reflect│◄───│  │── 남은 단계 있음? ──► advance_ste
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│  Tools (5종)                                                         │
+│  Tools (x5)                                                          │
 │                                                                      │
 │  ┌────────────┐ ┌────────────┐ ┌───────────────┐ ┌───────────────┐  │
 │  │search      │ │compare     │ │create_price   │ │search         │  │
 │  │_price      │ │_prices     │ │_chart         │ │_nutrition     │  │
-│  │최신 시세   │ │기간별 비교 │ │가격 추이 차트 │ │영양성분 조회  │   │
+│  │latest price│ │compare by  │ │price trend    │ │nutrient info  │   │
 │  └─────┬──────┘ └─────┬──────┘ └──────┬────────┘ └──────┬────────┘  │
 │        │              │               │                 │           │
 │        ▼              ▼               ▼                 ▼           │
 │  ┌──────────────────────────────┐  ┌────────────────────────────┐   │
 │  │  ES: prices-daily-goods      │  │  ES: nutrition-info         │   │
-│  │  (가격 175건)                │  │  (영양성분 75,200건)        │   │
+│  │  (prices: 175)               │  │  (nutrition: 75,200)       │    │
 │  └──────────────────────────────┘  └────────────────────────────┘   │
 │                      ▲                                               │
 │  ┌───────────────────┴──────────────────────────────────────────┐   │
-│  │  search (서브에이전트, LangGraph 3-way 병렬)                  │   │
-│  │  레시피·식재료 통합 검색 → ES: edu-recipe-rag (RAG 1,443건)   │   │
+│  │  search (sub-agent, LangGraph 3-way parallel)                │    │
+│  │  recipe search → ES: edu-recipe-rag (RAG 1,443 docs)        │     │
 │  │                                                              │   │
 │  │  START ──┬── match_search ────┐                              │   │
 │  │          ├── multi_match ─────┼──► merge_results             │   │
-│  │          └── rag_search(kNN) ─┘   (중복 제거, TOP_K)          │   │
+│  │          └── rag_search(kNN) ─┘   (dedup, TOP_K)             │    │
 │  └──────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────┘
 ```
